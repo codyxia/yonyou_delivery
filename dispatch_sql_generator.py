@@ -190,9 +190,12 @@ class ExcelReader:
 class SQLGenerator:
     """生成用友U8发货单SQL"""
 
-    def __init__(self, output_dir: str = 'output'):
+    def __init__(self, output_dir: str = 'output', acc_id: str = '603', year: str = '2026'):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        self.acc_id = acc_id
+        self.year = year
+        self.ufdata_db = f"UFDATA_{acc_id}_{year}"
 
     def _format_value(self, value, is_string: bool = True) -> str:
         """格式化SQL值"""
@@ -359,15 +362,15 @@ INSERT INTO [DispatchList] (
 
     def generate_update_sql(self) -> str:
         """生成更新UA_Identity的SQL"""
-        sql = """
+        sql = f"""
 -- 使用系统数据库 UFSystem
 USE UFSystem
 GO
 
 UPDATE ua_identity
-SET ifatherid = (SELECT MAX(dlid) FROM UFDATA_603_2026..dispatchlist),
-    ichildid = (SELECT MAX(idlsid) FROM UFDATA_603_2026..dispatchlists)
-WHERE cacc_id = '603'
+SET ifatherid = (SELECT MAX(dlid) FROM {self.ufdata_db}..dispatchlist),
+    ichildid = (SELECT MAX(idlsid) FROM {self.ufdata_db}..dispatchlists)
+WHERE cacc_id = '{self.acc_id}'
   AND cvouchtype = 'DISPATCH'
 
 GO"""
@@ -456,7 +459,7 @@ GO"""
         lines.append("END CATCH;")
         lines.append("")
         lines.append("-- 更新identity")
-        lines.append("UPDATE ua_identity SET ifatherid = (SELECT MAX(DLID) FROM DispatchList), ichildid = (SELECT MAX(iDLsID) FROM DispatchLists) WHERE cacc_id = '603' AND cvouchtype = 'DISPATCH';")
+        lines.append(f"UPDATE ua_identity SET ifatherid = (SELECT MAX(DLID) FROM DispatchList), ichildid = (SELECT MAX(iDLsID) FROM DispatchLists) WHERE cacc_id = '{self.acc_id}' AND cvouchtype = 'DISPATCH';")
 
         return '\n'.join(lines)
 
@@ -570,7 +573,7 @@ GO"""
         lines.append("END CATCH;")
         lines.append("")
         lines.append("-- 更新identity")
-        lines.append("UPDATE ua_identity SET ifatherid = (SELECT MAX(DLID) FROM DispatchList), ichildid = (SELECT MAX(iDLsID) FROM DispatchLists) WHERE cacc_id = '603' AND cvouchtype = 'DISPATCH';")
+        lines.append(f"UPDATE ua_identity SET ifatherid = (SELECT MAX(DLID) FROM DispatchList), ichildid = (SELECT MAX(iDLsID) FROM DispatchLists) WHERE cacc_id = '{self.acc_id}' AND cvouchtype = 'DISPATCH';")
 
         return '\n'.join(lines)
 
@@ -578,9 +581,9 @@ GO"""
 class DispatchProcessor:
     """发货单数据处理器"""
 
-    def __init__(self, files_dir: str = 'files', output_dir: str = 'output'):
+    def __init__(self, files_dir: str = 'files', output_dir: str = 'output', acc_id: str = '603', year: str = '2026'):
         self.reader = ExcelReader(files_dir)
-        self.generator = SQLGenerator(output_dir)
+        self.generator = SQLGenerator(output_dir, acc_id, year)
         self.output_dir = Path(output_dir)
 
     def process(self):
@@ -727,10 +730,12 @@ def main():
     parser = argparse.ArgumentParser(description='用友U8发货单SQL生成器')
     parser.add_argument('--files-dir', default='files', help='Excel文件目录')
     parser.add_argument('--output-dir', default='output', help='SQL输出目录')
+    parser.add_argument('--acc-id', default='603', help='账套ID')
+    parser.add_argument('--year', default='2026', help='年度')
 
     args = parser.parse_args()
 
-    processor = DispatchProcessor(args.files_dir, args.output_dir)
+    processor = DispatchProcessor(args.files_dir, args.output_dir, args.acc_id, args.year)
     processor.process()
 
 
