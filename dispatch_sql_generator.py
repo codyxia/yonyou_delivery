@@ -197,6 +197,15 @@ class SQLGenerator:
         self.year = year
         self.ufdata_db = f"UFDATA_{acc_id}_{year}"
 
+    def _get_numeric(self, value, default=0) -> float:
+        """安全获取数值，处理NaN"""
+        if pd.isna(value) or value == '' or value is None:
+            return default
+        try:
+            return float(value)
+        except:
+            return default
+
     def _format_value(self, value, is_string: bool = True) -> str:
         """格式化SQL值"""
         if pd.isna(value) or value == '' or value is None:
@@ -302,8 +311,8 @@ INSERT INTO [DispatchList] (
     [bFirst], [bReturnFlag], [bSettleAll], [cMaker],
     [iVTid], [cBusType], [iverifystate], [dcreatesystime]
 ) VALUES (
-    @DLID, {self._format_value(cdlcode)}, N'05', {self._format_value(cstcode, False)}, {ddate_sql},
-    {self._format_value(cdepcode)}, {self._format_value(ccuscode)}, {self._format_value(cexch_name)}, {iexchrate if iexchrate not in [None, '', 0] else 1},
+    @DLID, {self._format_value(cdlcode)}, N'05', {self._format_value(cstcode, True)}, {ddate_sql},
+    {self._format_value(cdepcode)}, {self._format_value(ccuscode)}, {self._format_value(cexch_name)}, {self._get_numeric(iexchrate, 1)},
     {bfirst_val}, 0, 0, {self._format_value(cmaker)},
     71, {self._format_value(cbuscode)}, 0, GETDATE()
 );"""
@@ -350,9 +359,9 @@ INSERT INTO [DispatchList] (
     [iNatUnitPrice], [iNatMoney], [iNatSum], [iTaxRate],
     [cMemo], [cDefine22], [cDefine23], [bSettleAll], [bcosting], [irowno]
 ) VALUES (
-    @DLID, {idlsid}, {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {iquantity if iquantity else 0},
-    {iunitprice if iunitprice else 0}, {itaxunitprice if itaxunitprice else 0}, {imoney if imoney else 0}, {itax if itax else 0}, {isum if isum else 0},
-    {iunitprice if iunitprice else 0}, {imoney if imoney else 0}, {isum if isum else 0}, {itaxrate_body if itaxrate_body else 0},
+    @DLID, {idlsid}, {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {self._get_numeric(iquantity)},
+    {self._get_numeric(iunitprice)}, {self._get_numeric(itaxunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(itax)}, {self._get_numeric(isum)},
+    {self._get_numeric(iunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(isum)}, {self._get_numeric(itaxrate_body)},
     {self._format_value(cmemo)}, {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {idx + 1}
 );""")
 
@@ -362,18 +371,11 @@ INSERT INTO [DispatchList] (
 
     def generate_update_sql(self) -> str:
         """生成更新UA_Identity的SQL"""
-        sql = f"""
--- 使用系统数据库 UFSystem
-USE UFSystem
-GO
-
-UPDATE ua_identity
-SET ifatherid = (SELECT MAX(dlid) FROM {self.ufdata_db}..dispatchlist),
-    ichildid = (SELECT MAX(idlsid) FROM {self.ufdata_db}..dispatchlists)
-WHERE cacc_id = '{self.acc_id}'
-  AND cvouchtype = 'DISPATCH'
-
-GO"""
+        sql = f"""UPDATE [UFSystem].[dbo].[ua_identity]
+SET iFatherId = (SELECT MAX(DLID) + 1 FROM [DispatchList]),
+    iChildId  = (SELECT MAX(iDLsID) + 1 FROM [DispatchLists])
+WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH'
+"""
         return sql
 
     def generate_header_part(self, inv_code: str, dlid: int, idlsid_start: int,
@@ -459,7 +461,7 @@ GO"""
         lines.append("END CATCH;")
         lines.append("")
         lines.append("-- 更新identity")
-        lines.append(f"UPDATE ua_identity SET ifatherid = (SELECT MAX(DLID) FROM DispatchList), ichildid = (SELECT MAX(iDLsID) FROM DispatchLists) WHERE cacc_id = '{self.acc_id}' AND cvouchtype = 'DISPATCH';")
+        lines.append(f"UPDATE [UFSystem].[dbo].[ua_identity] SET iFatherId = (SELECT MAX(DLID) + 1 FROM [DispatchList]), iChildId = (SELECT MAX(iDLsID) + 1 FROM [DispatchLists]) WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH';")
 
         return '\n'.join(lines)
 
@@ -541,9 +543,9 @@ GO"""
     [iNatUnitPrice], [iNatMoney], [iNatSum], [iTaxRate],
     [cMemo], [cDefine22], [cDefine23], [bSettleAll], [bcosting], [irowno]
 ) VALUES (
-    @DLID, (@iDLsID + 0 + {idx + 1}), {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {iquantity if iquantity else 0},
-    {iunitprice if iunitprice else 0}, {itaxunitprice if itaxunitprice else 0}, {imoney if imoney else 0}, {itax if itax else 0}, {isum if isum else 0},
-    {iunitprice if iunitprice else 0}, {imoney if imoney else 0}, {isum if isum else 0}, {itaxrate_body if itaxrate_body else 0},
+    @DLID, (@iDLsID + 0 + {idx + 1}), {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {self._get_numeric(iquantity)},
+    {self._get_numeric(iunitprice)}, {self._get_numeric(itaxunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(itax)}, {self._get_numeric(isum)},
+    {self._get_numeric(iunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(isum)}, {self._get_numeric(itaxrate_body)},
     {self._format_value(cmemo)}, {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {rownum}
 );""")
 
@@ -573,7 +575,7 @@ GO"""
         lines.append("END CATCH;")
         lines.append("")
         lines.append("-- 更新identity")
-        lines.append(f"UPDATE ua_identity SET ifatherid = (SELECT MAX(DLID) FROM DispatchList), ichildid = (SELECT MAX(iDLsID) FROM DispatchLists) WHERE cacc_id = '{self.acc_id}' AND cvouchtype = 'DISPATCH';")
+        lines.append(f"UPDATE [UFSystem].[dbo].[ua_identity] SET iFatherId = (SELECT MAX(DLID) + 1 FROM [DispatchList]), iChildId = (SELECT MAX(iDLsID) + 1 FROM [DispatchLists]) WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH';")
 
         return '\n'.join(lines)
 
@@ -652,7 +654,7 @@ class DispatchProcessor:
         - 单个发票一个文件：单号.sql
         - 单个发票拆分成多个：单号_1.sql, 单号_2.sql
         """
-        MAX_ROWS_PER_FILE = 1000  # 每文件最大明细数
+        MAX_ROWS_PER_FILE = 1000000  # 每文件最大明细数
 
         # 清空output文件夹
         if self.output_dir.exists():
