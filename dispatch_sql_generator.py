@@ -242,7 +242,7 @@ class SQLGenerator:
         date_cols = ['dDate', 'dSDate', 'dInvalidDate', 'dVDate', 'dBillStart', 'dBillEnd']
 
         # 布尔型列
-        bool_cols = ['bFirst', 'bReturnFlag', 'bSettleAll', 'bPrice', 'bGifts', 'bMustBank', 'bReMakeTax', 'bcosting', 'bSettleAll']
+        bool_cols = ['bFirst', 'bReturnFlag', 'bSettleAll', 'bPrice', 'bGifts', 'bMustBank', 'bReMakeTax', 'bCosting', 'bSettleAll']
 
         if col_name in numeric_cols:
             val = row.get(col_name, '')
@@ -288,7 +288,9 @@ class SQLGenerator:
         cmaker = header_row.get('制单人', '')
         cbuscode = header_row.get('业务类型', '普通销售')
         cstcode = header_row.get('销售类型编号', '01')
-        bfirst = header_row.get('退货标志', '0')
+        bfirst = header_row.get('期初标志', '0')
+        breturnflag = header_row.get('退货标志', '0')
+        bsettleall = header_row.get('先发货先开票标志', '0')
         cpersoncode = header_row.get('业务员编码', '')
 
         # 解析日期
@@ -303,6 +305,8 @@ class SQLGenerator:
 
         # 布尔值转换
         bfirst_val = '0' if str(bfirst).strip() in ['0', '否', 'N', 'n', ''] else '1'
+        breturnflag_val = '0' if str(breturnflag).strip() in ['0', '否', 'N', 'n', ''] else '1'
+        bsettleall_val = '0' if str(bsettleall).strip() in ['0', '否', 'N', 'n', ''] else '1'
 
         sql = f"""--- 插入表头 (DispatchList) ---
 INSERT INTO [DispatchList] (
@@ -313,7 +317,7 @@ INSERT INTO [DispatchList] (
 ) VALUES (
     @DLID, {self._format_value(cdlcode)}, N'05', {self._format_value(cstcode, True)}, {ddate_sql},
     {self._format_value(cdepcode)}, {self._format_value(ccuscode)}, {self._format_value(cexch_name)}, {self._get_numeric(iexchrate, 1)},
-    {bfirst_val}, 0, 0, {self._format_value(cmaker)},
+    {bfirst_val}, {breturnflag_val}, {bsettleall_val}, {self._format_value(cmaker)},
     71, {self._format_value(cbuscode)}, 0, GETDATE()
 );"""
         return sql
@@ -333,6 +337,11 @@ INSERT INTO [DispatchList] (
             imoney = row.get('金额_原币_无税', 0)
             itax = row.get('税额_原币', 0)
             isum = row.get('价税合计_原币', 0)
+            # 本币字段
+            inatunitprice = row.get('单价_本币_无税', 0)
+            inatmoney = row.get('金额_本币_无税', 0)
+            inattax = row.get('税额_本币', 0)
+            inatsum = row.get('价税合计_本币', 0)
             itaxrate_body = row.get('税率', 0)
             cmemo = row.get('表体备注', '')
             cdefine22 = row.get('表头自定义项1', '')
@@ -353,17 +362,19 @@ INSERT INTO [DispatchList] (
             dsdate = row.get('生产日期', '')
             dinvaliddate = row.get('失效日期', '')
 
-            sql_parts.append(f"""INSERT INTO [DispatchLists] (
+            sql = f"""INSERT INTO [DispatchLists] (
     [DLID], [iDLsID], [cWhCode], [cInvCode], [iQuantity],
     [iUnitPrice], [iTaxUnitPrice], [iMoney], [iTax], [iSum],
     [iNatUnitPrice], [iNatMoney], [iNatSum], [iTaxRate],
-    [cMemo], [cDefine22], [cDefine23], [bSettleAll], [bcosting], [irowno]
+    [cMemo], [cDefine22], [cDefine23], [bSettleAll], [bCosting], [irowno]
 ) VALUES (
     @DLID, {idlsid}, {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {self._get_numeric(iquantity)},
     {self._get_numeric(iunitprice)}, {self._get_numeric(itaxunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(itax)}, {self._get_numeric(isum)},
-    {self._get_numeric(iunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(isum)}, {self._get_numeric(itaxrate_body)},
+    {self._get_numeric(inatunitprice)}, {self._get_numeric(inatmoney)}, {self._get_numeric(inattax)}, {self._get_numeric(inatsum)}, {self._get_numeric(itaxrate_body)},
     {self._format_value(cmemo)}, {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {idx + 1}
-);""")
+);"""
+
+            sql_parts.append(sql)
 
             idlsid += 1
 
@@ -531,23 +542,33 @@ WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH'
             imoney = row.get('金额_原币_无税', 0)
             itax = row.get('税额_原币', 0)
             isum = row.get('价税合计_原币', 0)
+            # 本币字段
+            inatunitprice = row.get('单价_本币_无税', 0)
+            inatmoney = row.get('金额_本币_无税', 0)
+            inattax = row.get('税额_本币', 0)
+            inatsum = row.get('价税合计_本币', 0)
             itaxrate_body = row.get('税率', 0)
             cmemo = row.get('表体备注', '')
             cdefine22 = row.get('表头自定义项1', '')
             cdefine23 = row.get('表头自定义项2', '')
             rownum = start_rowno + idx
 
-            sql_parts.append(f"""INSERT INTO [DispatchLists] (
+            vals_part = f"""    @DLID, (@iDLsID + {idx + 1}), {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {self._get_numeric(iquantity)},
+    {self._get_numeric(iunitprice)}, {self._get_numeric(itaxunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(itax)}, {self._get_numeric(isum)},
+    {self._get_numeric(inatunitprice)}, {self._get_numeric(inatmoney)}, {self._get_numeric(inatsum)}, {self._get_numeric(itaxrate_body)},
+    {self._format_value(cmemo)}, {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {rownum}"""
+
+            sql = f"""INSERT INTO [DispatchLists] (
     [DLID], [iDLsID], [cWhCode], [cInvCode], [iQuantity],
     [iUnitPrice], [iTaxUnitPrice], [iMoney], [iTax], [iSum],
     [iNatUnitPrice], [iNatMoney], [iNatSum], [iTaxRate],
-    [cMemo], [cDefine22], [cDefine23], [bSettleAll], [bcosting], [irowno]
+    [cMemo], [cDefine22], [cDefine23], [bSettleAll], [bCosting], [irowno]
 ) VALUES (
-    @DLID, (@iDLsID + 0 + {idx + 1}), {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {self._get_numeric(iquantity)},
-    {self._get_numeric(iunitprice)}, {self._get_numeric(itaxunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(itax)}, {self._get_numeric(isum)},
-    {self._get_numeric(iunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(isum)}, {self._get_numeric(itaxrate_body)},
-    {self._format_value(cmemo)}, {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {rownum}
-);""")
+{vals_part}
+);"""
+            sql_parts.append(sql)
+
+            idlsid += 1
 
         return '\n'.join(sql_parts)
 
@@ -732,7 +753,7 @@ def main():
     parser = argparse.ArgumentParser(description='用友U8发货单SQL生成器')
     parser.add_argument('--files-dir', default='files', help='Excel文件目录')
     parser.add_argument('--output-dir', default='output', help='SQL输出目录')
-    parser.add_argument('--acc-id', default='603', help='账套ID')
+    parser.add_argument('--acc-id', default='604', help='账套ID')
     parser.add_argument('--year', default='2026', help='年度')
 
     args = parser.parse_args()
