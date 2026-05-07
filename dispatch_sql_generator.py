@@ -143,10 +143,10 @@ class ExcelReader:
         return extracted_files
 
     def get_all_excel_files(self) -> List[Path]:
-        """获取所有Excel文件（包括zip内的文件）"""
+        """获取所有Excel文件（包括zip内的文件，递归遍历所有子目录）"""
         excel_files = []
 
-        for item in self.files_dir.iterdir():
+        for item in self.files_dir.rglob('*'):
             if item.is_file():
                 if item.suffix.lower() in ['.xls', '.xlsx']:
                     excel_files.append(item)
@@ -323,7 +323,14 @@ INSERT INTO [DispatchList] (
         return sql
 
     def generate_body_sql(self, dlid: int, idlsid_start: int, rows: List[pd.Series]) -> str:
-        """生成表体INSERT SQL"""
+        """生成表体INSERT SQL
+
+        参考SQL表体列顺序：
+        [DLID], [iDLsID], [cWhCode], [cInvCode], [iQuantity],
+        [iUnitPrice], [iTaxUnitPrice], [iMoney], [iTax], [iSum],
+        [iNatUnitPrice], [iNatMoney], [iNatSum], [iTaxRate],
+        [cDefine22], [cDefine23], [bSettleAll], [bcosting], [irowno]
+        """
         sql_parts = []
         idlsid = idlsid_start
 
@@ -340,38 +347,22 @@ INSERT INTO [DispatchList] (
             # 本币字段
             inatunitprice = row.get('单价_本币_无税', 0)
             inatmoney = row.get('金额_本币_无税', 0)
-            inattax = row.get('税额_本币', 0)
             inatsum = row.get('价税合计_本币', 0)
             itaxrate_body = row.get('税率', 0)
-            cmemo = row.get('表体备注', '')
-            cdefine22 = row.get('表头自定义项1', '')
-            cdefine23 = row.get('表头自定义项2', '')
-
-            # 自由项
-            cfree1 = row.get('自由项1', '')
-            cfree2 = row.get('自由项2', '')
-            cfree3 = row.get('自由项3', '')
-            cfree4 = row.get('自由项4', '')
-            cfree5 = row.get('自由项5', '')
-            cfree6 = row.get('自由项6', '')
-            cfree7 = row.get('自由项7', '')
-            cfree8 = row.get('自由项8', '')
-            cfree9 = row.get('自由项9', '')
-            cfree10 = row.get('自由项10', '')
-            cbatch = row.get('批号', '')
-            dsdate = row.get('生产日期', '')
-            dinvaliddate = row.get('失效日期', '')
+            # 自定义项22/23对应平台订单号和销售订单号（从表体自定义项取数）
+            cdefine22 = row.get('表体自定义项1', '')
+            cdefine23 = row.get('表体自定义项2', '')
 
             sql = f"""INSERT INTO [DispatchLists] (
     [DLID], [iDLsID], [cWhCode], [cInvCode], [iQuantity],
     [iUnitPrice], [iTaxUnitPrice], [iMoney], [iTax], [iSum],
     [iNatUnitPrice], [iNatMoney], [iNatSum], [iTaxRate],
-    [cMemo], [cDefine22], [cDefine23], [bSettleAll], [bCosting], [irowno]
+    [cDefine22], [cDefine23], [bSettleAll], [bCosting], [irowno]
 ) VALUES (
     @DLID, {idlsid}, {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {self._get_numeric(iquantity)},
     {self._get_numeric(iunitprice)}, {self._get_numeric(itaxunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(itax)}, {self._get_numeric(isum)},
-    {self._get_numeric(inatunitprice)}, {self._get_numeric(inatmoney)}, {self._get_numeric(inattax)}, {self._get_numeric(inatsum)}, {self._get_numeric(itaxrate_body)},
-    {self._format_value(cmemo)}, {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {idx + 1}
+    {self._get_numeric(inatunitprice)}, {self._get_numeric(inatmoney)}, {self._get_numeric(inatsum)}, {self._get_numeric(itaxrate_body)},
+    {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {idx + 1}
 );"""
 
             sql_parts.append(sql)
@@ -383,9 +374,9 @@ INSERT INTO [DispatchList] (
     def generate_update_sql(self) -> str:
         """生成更新UA_Identity的SQL"""
         sql = f"""UPDATE [UFSystem].[dbo].[ua_identity]
-SET iFatherId = (SELECT MAX(DLID) + 1 FROM [DispatchList]),
-    iChildId  = (SELECT MAX(iDLsID) + 1 FROM [DispatchLists])
-WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH'
+SET iFatherId = (SELECT MAX(DLID) + 1 FROM [{self.ufdata_db}].[dbo].[DispatchList]),
+    iChildId  = (SELECT MAX(iDLsID) + 1 FROM [{self.ufdata_db}].[dbo].[DispatchLists])
+WHERE cAcc_id = '{self.acc_id}' AND cVouchType = 'DISPATCH'
 """
         return sql
 
@@ -472,7 +463,7 @@ WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH'
         lines.append("END CATCH;")
         lines.append("")
         lines.append("-- 更新identity")
-        lines.append(f"UPDATE [UFSystem].[dbo].[ua_identity] SET iFatherId = (SELECT MAX(DLID) + 1 FROM [DispatchList]), iChildId = (SELECT MAX(iDLsID) + 1 FROM [DispatchLists]) WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH';")
+        lines.append(f"UPDATE [UFSystem].[dbo].[ua_identity] SET iFatherId = (SELECT MAX(DLID) + 1 FROM [{self.ufdata_db}].[dbo].[DispatchList]), iChildId = (SELECT MAX(iDLsID) + 1 FROM [{self.ufdata_db}].[dbo].[DispatchLists]) WHERE cAcc_id = '{self.acc_id}' AND cVouchType = 'DISPATCH';")
 
         return '\n'.join(lines)
 
@@ -529,7 +520,14 @@ WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH'
 
     def generate_body_sql_with_rowno(self, dlid: int, idlsid_start: int,
                                      rows: List[pd.Series], start_rowno: int) -> str:
-        """生成带行号的表体SQL"""
+        """生成带行号的表体SQL
+
+        参考SQL表体列顺序：
+        [DLID], [iDLsID], [cWhCode], [cInvCode], [iQuantity],
+        [iUnitPrice], [iTaxUnitPrice], [iMoney], [iTax], [iSum],
+        [iNatUnitPrice], [iNatMoney], [iNatSum], [iTaxRate],
+        [cDefine22], [cDefine23], [bSettleAll], [bcosting], [irowno]
+        """
         sql_parts = []
         idlsid = idlsid_start
 
@@ -545,24 +543,23 @@ WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH'
             # 本币字段
             inatunitprice = row.get('单价_本币_无税', 0)
             inatmoney = row.get('金额_本币_无税', 0)
-            inattax = row.get('税额_本币', 0)
             inatsum = row.get('价税合计_本币', 0)
             itaxrate_body = row.get('税率', 0)
-            cmemo = row.get('表体备注', '')
-            cdefine22 = row.get('表头自定义项1', '')
-            cdefine23 = row.get('表头自定义项2', '')
+            # 自定义项22/23对应平台订单号和销售订单号（从表体自定义项取数）
+            cdefine22 = row.get('表体自定义项1', '')
+            cdefine23 = row.get('表体自定义项2', '')
             rownum = start_rowno + idx
 
             vals_part = f"""    @DLID, (@iDLsID + {idx + 1}), {self._format_value(cwhcode)}, {self._format_value(cinvcode)}, {self._get_numeric(iquantity)},
     {self._get_numeric(iunitprice)}, {self._get_numeric(itaxunitprice)}, {self._get_numeric(imoney)}, {self._get_numeric(itax)}, {self._get_numeric(isum)},
     {self._get_numeric(inatunitprice)}, {self._get_numeric(inatmoney)}, {self._get_numeric(inatsum)}, {self._get_numeric(itaxrate_body)},
-    {self._format_value(cmemo)}, {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {rownum}"""
+    {self._format_value(cdefine22)}, {self._format_value(cdefine23)}, 0, 1, {rownum}"""
 
             sql = f"""INSERT INTO [DispatchLists] (
     [DLID], [iDLsID], [cWhCode], [cInvCode], [iQuantity],
     [iUnitPrice], [iTaxUnitPrice], [iMoney], [iTax], [iSum],
     [iNatUnitPrice], [iNatMoney], [iNatSum], [iTaxRate],
-    [cMemo], [cDefine22], [cDefine23], [bSettleAll], [bCosting], [irowno]
+    [cDefine22], [cDefine23], [bSettleAll], [bCosting], [irowno]
 ) VALUES (
 {vals_part}
 );"""
@@ -596,7 +593,7 @@ WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH'
         lines.append("END CATCH;")
         lines.append("")
         lines.append("-- 更新identity")
-        lines.append(f"UPDATE [UFSystem].[dbo].[ua_identity] SET iFatherId = (SELECT MAX(DLID) + 1 FROM [DispatchList]), iChildId = (SELECT MAX(iDLsID) + 1 FROM [DispatchLists]) WHERE cAcc_id = {self.acc_id} AND cVouchType = 'DISPATCH';")
+        lines.append(f"UPDATE [UFSystem].[dbo].[ua_identity] SET iFatherId = (SELECT MAX(DLID) + 1 FROM [{self.ufdata_db}].[dbo].[DispatchList]), iChildId = (SELECT MAX(iDLsID) + 1 FROM [{self.ufdata_db}].[dbo].[DispatchLists]) WHERE cAcc_id = '{self.acc_id}' AND cVouchType = 'DISPATCH';")
 
         return '\n'.join(lines)
 
@@ -675,7 +672,7 @@ class DispatchProcessor:
         - 单个发票一个文件：单号.sql
         - 单个发票拆分成多个：单号_1.sql, 单号_2.sql
         """
-        MAX_ROWS_PER_FILE = 1000000  # 每文件最大明细数
+        MAX_ROWS_PER_FILE = 10000  # 每文件最大明细数
 
         # 清空output文件夹
         if self.output_dir.exists():
