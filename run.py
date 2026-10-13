@@ -52,7 +52,7 @@ def main() -> int:
     parser.add_argument("--year", default="2026", help="年度（默认 2026）")
     parser.add_argument("--zip-threshold", type=int, default=5,
                         help="output 下 .sql 超过此数量则自动压缩（默认 5）")
-    parser.add_argument("--yes", action="store_true", help="跳过确认直接执行")
+    parser.add_argument("--yes", action="store_true", help="兼容保留参数，无实际作用（已默认直接执行）")
     parser.add_argument("--list", action="store_true", help="只列出候选文件，不执行")
     parser.add_argument("--no-zip", action="store_true", help="跳过自动压缩")
     parser.add_argument("--keep-files", action="store_true",
@@ -81,15 +81,7 @@ def main() -> int:
         return 0
 
     latest = candidates[0]
-    if not args.yes:
-        try:
-            ans = input(f"使用 {latest.name}？[Y/n] ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print("\n已取消")
-            return 130
-        if ans not in ("", "y", "yes"):
-            print("已取消")
-            return 0
+    print(f"使用：{latest.name}")
 
     # 1. 清空 files/ 并复制
     if args.keep_files:
