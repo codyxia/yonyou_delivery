@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""一键流程：从下载目录取最新 Excel/zip -> files/ -> 生成 SQL -> 超阈值自动打 zip。
+"""一键流程：从下载目录取一批 Excel/zip -> files/ -> 生成 SQL -> 超阈值自动打 zip。
+
+默认复制"同一批下载"的文件：修改时间与最新文件相差不超过 --window-minutes 分钟的文件，
+这样一次下载多个 Excel 时会全部处理，而不会混入下载目录里的陈年旧文件。
 
 用法：
     python run.py --acc-id 604 --year 2026
-    python run.py --src ~/Downloads --zip-threshold 5 --yes
+    python run.py --src ~/Downloads --zip-threshold 5
+    python run.py --all               # 复制下载目录顶层的全部候选文件
+    python run.py --top 3             # 只取最近的 3 个文件
     python run.py --list              # 只列出候选文件，不执行
 """
 import argparse
@@ -30,6 +35,27 @@ def find_candidates(src_dir: Path):
     return files
 
 
+def select_batch(candidates, take_all: bool = False, top: int = 0,
+                 window_minutes: int = 30):
+    """从候选文件里挑出本次要处理的文件。
+
+    - take_all：全部候选；
+    - top > 0：最近的 top 个；
+    - 否则：以最新文件为基准，取修改时间相差不超过 window_minutes 分钟的一批。
+
+    candidates 已按修改时间倒序。
+    """
+    if take_all:
+        return list(candidates)
+    if top > 0:
+        return list(candidates[:top])
+    if not candidates:
+        return []
+    newest_mtime = candidates[0].stat().st_mtime
+    cutoff = newest_mtime - window_minutes * 60
+    return [p for p in candidates if p.stat().st_mtime >= cutoff]
+
+
 def clear_files_dir(files_dir: Path):
     """删除 files/ 下旧的 Excel/zip（不动其他文件如 .DS_Store）。"""
     removed = []
@@ -53,6 +79,12 @@ def main() -> int:
     parser.add_argument("--zip-threshold", type=int, default=5,
                         help="output 下 .sql 超过此数量则自动压缩（默认 5）")
     parser.add_argument("--yes", action="store_true", help="兼容保留参数，无实际作用（已默认直接执行）")
+    parser.add_argument("--all", action="store_true",
+                        help="复制下载目录顶层的全部候选文件（默认只取同一批下载的）")
+    parser.add_argument("--top", type=int, default=0, metavar="N",
+                        help="只取最近的 N 个文件（0 表示按批次窗口取）")
+    parser.add_argument("--window-minutes", type=int, default=30, metavar="M",
+                        help="批次窗口：与最新文件修改时间相差不超过 M 分钟的文件都算同一批（默认 30）")
     parser.add_argument("--list", action="store_true", help="只列出候选文件，不执行")
     parser.add_argument("--no-zip", action="store_true", help="跳过自动压缩")
     parser.add_argument("--keep-files", action="store_true",
@@ -71,17 +103,25 @@ def main() -> int:
         print(f"错误：在 {src_dir} 顶层未找到 .xls/.xlsx/.zip 文件", file=sys.stderr)
         return 1
 
-    print(f"候选文件（按最新排序，取第 1 个）：")
-    for i, p in enumerate(candidates[:5]):
+    selected = select_batch(candidates, take_all=args.all, top=args.top,
+                            window_minutes=args.window_minutes)
+    selected_names = {p.name for p in selected}
+
+    mode = ("全部文件" if args.all else
+            f"最近 {args.top} 个" if args.top > 0 else
+            f"同一批下载（窗口 {args.window_minutes} 分钟）")
+    print(f"候选文件（按最新排序，本次选取策略：{mode}）：")
+    for p in candidates[:20]:
         mtime = datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-        mark = " <-- 本次使用" if i == 0 else ""
+        mark = " <-- 本次使用" if p.name in selected_names else ""
         print(f"  {mtime}  {p.name}{mark}")
+    if len(candidates) > 20:
+        print(f"  ...（另有 {len(candidates) - 20} 个更早的文件未显示）")
 
     if args.list:
         return 0
 
-    latest = candidates[0]
-    print(f"使用：{latest.name}")
+    print(f"本次使用 {len(selected)} 个文件")
 
     # 1. 清空 files/ 并复制
     if args.keep_files:
@@ -90,9 +130,12 @@ def main() -> int:
         removed = clear_files_dir(files_dir)
         print(f"已清空 files/ 下 {len(removed)} 个旧文件")
     files_dir.mkdir(parents=True, exist_ok=True)
-    dest = files_dir / latest.name
-    shutil.copy2(latest, dest)
-    print(f"已复制：{latest} -> {dest}")
+    for src in selected:
+        dest = files_dir / src.name
+        if dest.exists() and not args.keep_files:
+            dest.unlink()
+        shutil.copy2(src, dest)
+        print(f"已复制：{src.name} -> {dest}")
 
     # 2. 生成 SQL（复用现有逻辑）
     processor = DispatchProcessor(str(files_dir), str(output_dir), args.acc_id, args.year)
