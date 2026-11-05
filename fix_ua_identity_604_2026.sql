@@ -14,7 +14,7 @@ SELECT MAX(DLID) AS MaxDLID FROM [UFDATA_604_2026].[dbo].[DispatchList];
 SELECT MAX(iDLsID) AS MaxiDLsID FROM [UFDATA_604_2026].[dbo].[DispatchLists];
 SELECT cAcc_id, cVouchType, iFatherId, iChildId
 FROM [UFSystem].[dbo].[ua_identity]
-WHERE cAcc_id = '604' AND cVouchType = 'DISPATCH';
+WHERE cAcc_id = '603' AND cVouchType = 'DISPATCH';
 
 -- 若 iFatherId <= MaxDLID 或 iChildId <= MaxiDLsID，即确认水位落后，继续第二段。
 -- 若已存在目标单据（如下查出记录），说明是重复导入，不要重放，先删除或跳过该单：
@@ -28,7 +28,7 @@ SET iFatherId = (SELECT ISNULL(MAX(DLID), 0) + 1
                  FROM [UFDATA_604_2026].[dbo].[DispatchList]),
     iChildId  = (SELECT ISNULL(MAX(iDLsID), 0) + 1
                  FROM [UFDATA_604_2026].[dbo].[DispatchLists])
-WHERE cAcc_id = '604' AND cVouchType = 'DISPATCH';
+WHERE cAcc_id = '603' AND cVouchType = 'DISPATCH';
 
 
 -- ======================== 第三段：复核（期望：前后两行相等） ========================
@@ -36,7 +36,7 @@ SELECT (SELECT ISNULL(MAX(DLID), 0) + 1 FROM [UFDATA_604_2026].[dbo].[DispatchLi
        (SELECT ISNULL(MAX(iDLsID), 0) + 1 FROM [UFDATA_604_2026].[dbo].[DispatchLists]) AS ExpectChild;
 SELECT cAcc_id, cVouchType, iFatherId, iChildId
 FROM [UFSystem].[dbo].[ua_identity]
-WHERE cAcc_id = '604' AND cVouchType = 'DISPATCH';
+WHERE cAcc_id = '603' AND cVouchType = 'DISPATCH';
 
 -- 复核通过后，导入时注意：单会话、按文件名顺序逐个执行，
 -- 不要多窗口/多人并发，也不要在业务高峰前台做单时批量导入。
