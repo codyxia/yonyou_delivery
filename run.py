@@ -4,6 +4,9 @@
 默认复制"同一批下载"的文件：修改时间与最新文件相差不超过 --window-minutes 分钟的文件，
 这样一次下载多个 Excel 时会全部处理，而不会混入下载目录里的陈年旧文件。
 
+生成成功后会自动清空 files/ 下的源文件；若 .sql 数量超过阈值打了 zip，
+打包成功后还会清空 output/ 下的 .sql（输出 zip 在仓库根目录，不受影响）。
+
 用法：
     python run.py --acc-id 604 --year 2026
     python run.py --src ~/Downloads --zip-threshold 5
@@ -69,6 +72,18 @@ def clear_files_dir(files_dir: Path):
     return removed
 
 
+def clear_sql_files(output_dir: Path):
+    """删除 output/ 下的 .sql（不动 zip 等其他文件），返回被删文件名。"""
+    removed = []
+    if not output_dir.is_dir():
+        return removed
+    for p in output_dir.glob("*.sql"):
+        if p.is_file():
+            p.unlink()
+            removed.append(p.name)
+    return removed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="发货单SQL一键生成（含取数/压缩）")
     parser.add_argument("--src", default="~/Downloads", help="下载目录（默认 ~/Downloads）")
@@ -88,7 +103,9 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="只列出候选文件，不执行")
     parser.add_argument("--no-zip", action="store_true", help="跳过自动压缩")
     parser.add_argument("--keep-files", action="store_true",
-                        help="不清空 files/，直接追加复制（调试用）")
+                        help="不清空 files/，直接追加复制，且生成后保留源文件（调试用）")
+    parser.add_argument("--keep-source", action="store_true",
+                        help="生成 SQL 后保留 files/ 源文件（默认生成成功后清空）")
     args = parser.parse_args()
 
     src_dir = Path(args.src).expanduser()
@@ -152,7 +169,14 @@ def main() -> int:
     for p in sql_files:
         print(f"  {p.name} ({p.stat().st_size / 1024:.1f} KB)")
 
-    # 4. 超阈值自动压缩（zip 放当前目录，避免被下次清空 output 误删）
+    # 4. 生成成功后清空 files/ 源文件，避免下次误用旧数据
+    if args.keep_source or args.keep_files:
+        print("\n保留 files/ 源文件（--keep-source/--keep-files）")
+    else:
+        removed_files = clear_files_dir(files_dir)
+        print(f"\n已清空 files/ 下 {len(removed_files)} 个源文件")
+
+    # 5. 超阈值自动压缩（zip 放当前目录，避免被下次清空 output 误删）
     if not args.no_zip and len(sql_files) > args.zip_threshold:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         zip_name = f"{args.acc_id}_{args.year}_{stamp}.zip"
@@ -160,10 +184,14 @@ def main() -> int:
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for p in sql_files:
                 zf.write(p, arcname=p.name)
-        print(f"\n超过阈值（>{args.zip_threshold}），已压缩：{zip_path}")
+        print(f"超过阈值（>{args.zip_threshold}），已压缩：{zip_path}")
         print("可直接将此 zip 发给运维")
+
+        # 压缩包已落盘，清掉 output 里的 .sql，避免残留造成重复导入
+        removed_sql = clear_sql_files(output_dir)
+        print(f"已清空 output/ 下 {len(removed_sql)} 个 .sql")
     else:
-        print(f"\n未超过阈值（<={args.zip_threshold}），无需压缩")
+        print(f"未超过阈值（<={args.zip_threshold}），保留 output 下的 .sql 供直接导入")
 
     return 0
 
