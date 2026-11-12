@@ -4,8 +4,9 @@
 默认复制"同一批下载"的文件：修改时间与最新文件相差不超过 --window-minutes 分钟的文件，
 这样一次下载多个 Excel 时会全部处理，而不会混入下载目录里的陈年旧文件。
 
-生成成功后会自动清空 files/ 下的源文件；若 .sql 数量超过阈值打了 zip，
-打包成功后还会清空 output/ 下的 .sql（输出 zip 在仓库根目录，不受影响）。
+生成前会删掉上一次生成的压缩包（只认 {账套}_{年份}_{时间戳}.zip 这种命名）。
+生成成功后自动清空 files/ 下的源文件；若 .sql 数量超过阈值打了 zip，
+打包成功后还会清空 output/ 下的 .sql（新 zip 写在仓库根目录）。
 
 用法：
     python run.py --acc-id 604 --year 2026
@@ -15,6 +16,7 @@
     python run.py --list              # 只列出候选文件，不执行
 """
 import argparse
+import re
 import shutil
 import sys
 import zipfile
@@ -24,6 +26,8 @@ from pathlib import Path
 from dispatch_sql_generator import DispatchProcessor
 
 CANDIDATE_SUFFIXES = {".xls", ".xlsx", ".zip"}
+# 脚本自己产出的压缩包命名：{acc_id}_{year}_{yyyymmdd_HHMMSS}.zip
+GENERATED_ZIP_RE = re.compile(r"^\d+_\d{4}_\d{8}_\d{6}\.zip$")
 
 
 def find_candidates(src_dir: Path):
@@ -72,6 +76,20 @@ def clear_files_dir(files_dir: Path):
     return removed
 
 
+def clear_old_zips(*dirs: Path):
+    """删除历史生成的 SQL 压缩包（只认脚本自己的命名，不动别人的 zip）。"""
+    removed = []
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for p in d.iterdir():
+            if (p.is_file() and p.suffix.lower() == ".zip"
+                    and GENERATED_ZIP_RE.match(p.name)):
+                p.unlink()
+                removed.append(p.name)
+    return removed
+
+
 def clear_sql_files(output_dir: Path):
     """删除 output/ 下的 .sql（不动 zip 等其他文件），返回被删文件名。"""
     removed = []
@@ -102,6 +120,8 @@ def main() -> int:
                         help="批次窗口：与最新文件修改时间相差不超过 M 分钟的文件都算同一批（默认 30）")
     parser.add_argument("--list", action="store_true", help="只列出候选文件，不执行")
     parser.add_argument("--no-zip", action="store_true", help="跳过自动压缩")
+    parser.add_argument("--keep-zips", action="store_true",
+                        help="生成前不删除历史压缩包（默认会清掉上一次生成的 zip）")
     parser.add_argument("--keep-files", action="store_true",
                         help="不清空 files/，直接追加复制，且生成后保留源文件（调试用）")
     parser.add_argument("--keep-source", action="store_true",
@@ -154,11 +174,21 @@ def main() -> int:
         shutil.copy2(src, dest)
         print(f"已复制：{src.name} -> {dest}")
 
-    # 2. 生成 SQL（复用现有逻辑）
+    # 2. 生成前删掉历史压缩包（仓库根目录 + output 目录）
+    if args.keep_zips:
+        print("保留历史压缩包（--keep-zips）")
+    else:
+        removed_zips = clear_old_zips(Path.cwd(), output_dir)
+        if removed_zips:
+            print(f"已删除 {len(removed_zips)} 个历史压缩包：{', '.join(removed_zips)}")
+        else:
+            print("没有需要清理的历史压缩包")
+
+    # 3. 生成 SQL（复用现有逻辑）
     processor = DispatchProcessor(str(files_dir), str(output_dir), args.acc_id, args.year)
     processor.process()
 
-    # 3. 统计 output
+    # 4. 统计 output
     sql_files = sorted(output_dir.glob("*.sql")) if output_dir.is_dir() else []
     if not sql_files:
         print("错误：output 下没有生成任何 .sql（可能表头校验失败整文件跳过），请检查上方日志",
@@ -169,14 +199,14 @@ def main() -> int:
     for p in sql_files:
         print(f"  {p.name} ({p.stat().st_size / 1024:.1f} KB)")
 
-    # 4. 生成成功后清空 files/ 源文件，避免下次误用旧数据
+    # 5. 生成成功后清空 files/ 源文件，避免下次误用旧数据
     if args.keep_source or args.keep_files:
         print("\n保留 files/ 源文件（--keep-source/--keep-files）")
     else:
         removed_files = clear_files_dir(files_dir)
         print(f"\n已清空 files/ 下 {len(removed_files)} 个源文件")
 
-    # 5. 超阈值自动压缩（zip 放当前目录，避免被下次清空 output 误删）
+    # 6. 超阈值自动压缩（zip 放当前目录；下次运行时第 2 步会清掉它）
     if not args.no_zip and len(sql_files) > args.zip_threshold:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         zip_name = f"{args.acc_id}_{args.year}_{stamp}.zip"
